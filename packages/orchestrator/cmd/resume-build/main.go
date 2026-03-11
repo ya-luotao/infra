@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"math"
 	"net/http"
@@ -53,6 +55,7 @@ func main() {
 	iterations := flag.Int("iterations", 0, "run N iterations (0 = interactive)")
 	coldStart := flag.Bool("cold", false, "clear cache between iterations (cold start each time)")
 	noPrefetch := flag.Bool("no-prefetch", false, "disable memory prefetching")
+	prewarmRootfs := flag.Bool("prewarm-rootfs", false, "sequentially read the logical rootfs before resume to warm host-side caches")
 	verbose := flag.Bool("v", false, "verbose logging")
 
 	// Command execution (no pause)
@@ -152,7 +155,7 @@ func main() {
 		iterations: *iterations,
 	}
 
-	err := run(ctx, *fromBuild, *iterations, *coldStart, *noPrefetch, *verbose, pauseOpts, runOpts)
+	err := run(ctx, *fromBuild, *iterations, *coldStart, *noPrefetch, *prewarmRootfs, *verbose, pauseOpts, runOpts)
 	cancel()
 
 	if err != nil {
@@ -257,16 +260,17 @@ func setupEnv(from string) error {
 }
 
 type runner struct {
-	factory    *sandbox.Factory
-	sandboxes  *sandbox.Map
-	tmpl       template.Template
-	sbxConfig  sandbox.Config
-	buildID    string
-	cache      *template.Cache
-	coldStart  bool
-	noPrefetch bool
-	config     cfg.BuilderConfig
-	storage    storage.StorageProvider
+	factory       *sandbox.Factory
+	sandboxes     *sandbox.Map
+	tmpl          template.Template
+	sbxConfig     sandbox.Config
+	buildID       string
+	cache         *template.Cache
+	coldStart     bool
+	noPrefetch    bool
+	prewarmRootfs bool
+	config        cfg.BuilderConfig
+	storage       storage.StorageProvider
 }
 
 func (r *runner) resumeOnce(ctx context.Context, iter int) (time.Duration, error) {
@@ -275,6 +279,10 @@ func (r *runner) resumeOnce(ctx context.Context, iter int) (time.Duration, error
 		TeamID:      "local",
 		SandboxID:   fmt.Sprintf("sbx-%d-%d", time.Now().UnixNano(), iter),
 		ExecutionID: fmt.Sprintf("exec-%d-%d", time.Now().UnixNano(), iter),
+	}
+
+	if err := r.prewarmRootfsIfEnabled(ctx, false); err != nil {
+		return 0, err
 	}
 
 	t0 := time.Now()
@@ -297,6 +305,9 @@ func (r *runner) interactive(ctx context.Context) error {
 	}
 
 	fmt.Println("🚀 Starting...")
+	if err := r.prewarmRootfsIfEnabled(ctx, true); err != nil {
+		return err
+	}
 	t0 := time.Now()
 	sbx, err := r.factory.ResumeSandbox(ctx, r.tmpl, r.sbxConfig, runtime, t0, t0.Add(24*time.Hour), nil)
 	if err != nil {
@@ -338,6 +349,9 @@ func (r *runner) cmdOnce(ctx context.Context, opts runOptions, verbose bool) (cm
 
 	if verbose {
 		fmt.Println("🚀 Starting sandbox...")
+	}
+	if err := r.prewarmRootfsIfEnabled(ctx, verbose); err != nil {
+		return cmdTimings{err: err}, err
 	}
 	t0 := time.Now()
 	sbx, err := r.factory.ResumeSandbox(ctx, r.tmpl, r.sbxConfig, runtime, t0, t0.Add(24*time.Hour), nil)
@@ -429,6 +443,73 @@ func (r *runner) cmdBenchmark(ctx context.Context, opts runOptions) error {
 		if t.err != nil {
 			return t.err
 		}
+	}
+
+	return nil
+}
+
+func (r *runner) prewarmRootfsIfEnabled(ctx context.Context, verbose bool) error {
+	if !r.prewarmRootfs {
+		return nil
+	}
+
+	rootfs, err := r.tmpl.Rootfs()
+	if err != nil {
+		return fmt.Errorf("get rootfs for prewarm: %w", err)
+	}
+
+	size, err := rootfs.Size(ctx)
+	if err != nil {
+		return fmt.Errorf("get rootfs size for prewarm: %w", err)
+	}
+
+	const chunkSize = 8 << 20
+	const fallbackChunkSize = 256 << 10
+	buf := make([]byte, chunkSize)
+	fallbackBuf := make([]byte, fallbackChunkSize)
+	start := time.Now()
+	var total int64
+	var skipped int64
+
+	fmt.Printf("PREWARM rootfs start logical_mb=%d\n", size>>20)
+
+	for off := int64(0); off < size; off += int64(len(buf)) {
+		readLen := min(int64(len(buf)), size-off)
+		n, readErr := rootfs.ReadAt(ctx, buf[:readLen], off)
+		total += int64(n)
+
+		if readErr == nil || errors.Is(readErr, io.EOF) {
+			continue
+		}
+
+		var unavailable block.BytesNotAvailableError
+		if !errors.As(readErr, &unavailable) {
+			return fmt.Errorf("prewarm rootfs at offset %d: %w", off, readErr)
+		}
+
+		for subOff := off; subOff < off+readLen; subOff += fallbackChunkSize {
+			subLen := min(int64(len(fallbackBuf)), off+readLen-subOff)
+			subN, subErr := rootfs.ReadAt(ctx, fallbackBuf[:subLen], subOff)
+			total += int64(subN)
+
+			if subErr == nil || errors.Is(subErr, io.EOF) {
+				continue
+			}
+
+			if errors.As(subErr, &unavailable) {
+				skipped += subLen
+
+				continue
+			}
+
+			return fmt.Errorf("prewarm rootfs at offset %d: %w", subOff, subErr)
+		}
+	}
+
+	if verbose {
+		fmt.Printf("PREWARM rootfs done read_mb=%d skipped_mb=%d duration=%s\n", total>>20, skipped>>20, time.Since(start))
+	} else {
+		fmt.Printf("PREWARM rootfs done read_mb=%d skipped_mb=%d duration_ms=%d\n", total>>20, skipped>>20, time.Since(start).Milliseconds())
 	}
 
 	return nil
@@ -962,7 +1043,7 @@ func (r *runner) benchmark(ctx context.Context, n int) error {
 	return lastErr
 }
 
-func run(ctx context.Context, buildID string, iterations int, coldStart, noPrefetch, verbose bool, pauseOpts pauseOptions, runOpts runOptions) error {
+func run(ctx context.Context, buildID string, iterations int, coldStart, noPrefetch, prewarmRootfs, verbose bool, pauseOpts pauseOptions, runOpts runOptions) error {
 	// Silence other loggers unless verbose mode
 	var l logger.Logger
 	if !verbose {
@@ -1082,15 +1163,16 @@ func run(ctx context.Context, buildID string, iterations int, coldStart, noPrefe
 
 	token := "local"
 	r := &runner{
-		factory:    factory,
-		sandboxes:  sandboxes,
-		tmpl:       tmpl,
-		buildID:    buildID,
-		cache:      cache,
-		coldStart:  coldStart,
-		noPrefetch: noPrefetch,
-		config:     config.BuilderConfig,
-		storage:    persistence,
+		factory:       factory,
+		sandboxes:     sandboxes,
+		tmpl:          tmpl,
+		buildID:       buildID,
+		cache:         cache,
+		coldStart:     coldStart,
+		noPrefetch:    noPrefetch,
+		prewarmRootfs: prewarmRootfs,
+		config:        config.BuilderConfig,
+		storage:       persistence,
 		sbxConfig: sandbox.Config{
 			BaseTemplateID: buildID,
 			Vcpu:           1,
