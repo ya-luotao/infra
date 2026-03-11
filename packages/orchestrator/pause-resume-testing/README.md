@@ -12,15 +12,13 @@ Included workloads:
 Easy mode: low-pressure CPU/RAM test. This is the default workload and preset.
 
 ```bash
-BASE_ID=your-build-id
-bash ./test-pause-resume.sh $BASE_ID
+./test-pause-resume.sh $BASE_ID
 ```
 
 Hard mode: higher-pressure CPU/RAM test.
 
 ```bash
-BASE_ID=your-build-id
-bash ./test-pause-resume.sh $BASE_ID --difficulty high
+./test-pause-resume.sh $BASE_ID --difficulty high
 ```
 
 ## How It Works
@@ -41,15 +39,13 @@ Use a different Python file by passing it as the second argument.
 FFmpeg low preset:
 
 ```bash
-BASE_ID=your-build-id
-bash ./test-pause-resume.sh $BASE_ID ./ffmpeg_thread_workload.py
+./test-pause-resume.sh $BASE_ID ./ffmpeg_thread_workload.py
 ```
 
 FFmpeg high preset:
 
 ```bash
-BASE_ID=your-build-id
-bash ./test-pause-resume.sh $BASE_ID ./ffmpeg_thread_workload.py --difficulty high
+./test-pause-resume.sh $BASE_ID ./ffmpeg_thread_workload.py --difficulty high
 ```
 
 ## CPU/RAM Presets
@@ -64,11 +60,10 @@ You can still override any of them inline if needed.
 Example:
 
 ```bash
-BASE_ID=your-build-id \
 TARGET_USED_MB=256 \
 TARGET_BAND_LOW_MB=224 \
 TARGET_BAND_HIGH_MB=320 \
-bash ./test-pause-resume.sh $BASE_ID
+./test-pause-resume.sh $BASE_ID
 ```
 
 ## FFmpeg Presets
@@ -83,10 +78,9 @@ You can still override any of them inline if needed.
 Example:
 
 ```bash
-BASE_ID=your-build-id \
 OUTPUT_MODE=null \
 THREADS_PER_JOB=2 \
-bash ./test-pause-resume.sh $BASE_ID ./ffmpeg_thread_workload.py --difficulty high
+./test-pause-resume.sh $BASE_ID ./ffmpeg_thread_workload.py --difficulty high
 ```
 
 ## Notes
@@ -99,8 +93,7 @@ bash ./test-pause-resume.sh $BASE_ID ./ffmpeg_thread_workload.py --difficulty hi
 Example:
 
 ```bash
-BASE_ID=your-build-id \
-bash ./test-pause-resume.sh \
+  ./test-pause-resume.sh \
   $BASE_ID \
   ./ffmpeg_thread_workload.py \
   -- -cold -no-prefetch -v
