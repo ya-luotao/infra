@@ -1,3 +1,102 @@
+# AWS Infrastructure Endpoints & Network Reference (Fara Inc)
+
+Production deployment: **us-east-1**, account `528893196824`, domain `e2b.landing.money`.
+
+## Public Endpoints
+
+| Endpoint | URL | Purpose |
+|----------|-----|---------|
+| API (REST + gRPC) | `https://api.e2b.landing.money` | Main E2B API — health check: `/health` |
+| Nomad UI | `https://nomad.e2b.landing.money` | Cluster management UI (requires ACL token, see below) |
+| Sandbox access | `https://<sandbox-id>.e2b.landing.money` | Per-sandbox URLs via client-proxy |
+| Wildcard DNS | `*.e2b.landing.money` | Cloudflare CNAME → ALB (not proxied, TTL 3600) |
+
+### Nomad UI Access Token
+
+The Nomad UI requires an ACL token. Retrieve it from AWS Secrets Manager:
+
+```sh
+aws secretsmanager get-secret-value --secret-id e2b-cluster \
+  --region us-east-1 --query SecretString --output text \
+  | python3 -c "import sys,json; print(json.loads(sys.stdin.read())['NOMAD_ACL_TOKEN'])"
+```
+
+Paste the token into the Nomad UI's ACL Token prompt (lock icon, top-right corner).
+
+## ALB Routing (port 443, TLS terminated)
+
+| Priority | Condition | Target Group | Backend Port |
+|----------|-----------|-------------|-------------|
+| 10 | Host: `nomad.e2b.landing.money` | `e2b-nomad` | 4646 (Nomad) |
+| 20 | Header: `content-type: application/grpc*` | `e2b-ingress-grpc` (HTTP/2) | 8080 (Traefik) |
+| default | All other requests | `e2b-ingress` (HTTP/1.1) | 8080 (Traefik) |
+
+Port 80 redirects to 443 (HTTP 301). ACM wildcard cert: `*.e2b.landing.money`.
+
+## Traefik Ingress Routing (port 8080)
+
+| Service | Priority | Route Rule |
+|---------|----------|------------|
+| dashboard-api | 1000 | `HostRegexp(<subdomain>.{domain:.+})` |
+| api | 500 | `HostRegexp(api.{domain:.+})` |
+| client-proxy | 100 | `PathPrefix(/)` (catch-all) |
+
+## Internal Service Ports
+
+| Service | Port | Protocol | Notes |
+|---------|------|----------|-------|
+| API HTTP | 80 | HTTP | Behind Traefik |
+| API gRPC | 5009 | gRPC | `api-grpc` Consul service |
+| Orchestrator gRPC | 5008 | gRPC | System job on client nodes |
+| Orchestrator proxy | 5007 | TCP | System job on client nodes |
+| Template manager | 5008 | gRPC | On build nodes |
+| Client proxy | 3002 | HTTP | Sandbox traffic |
+| Client proxy health | 3001 | HTTP | Health check |
+| Redis | 6379 | TCP | `redis.service.consul` |
+| ClickHouse (native) | 9000 | TCP | `clickhouse.service.consul` |
+| ClickHouse HTTP | 8123 | HTTP | Internal health check |
+| Loki | 3100 | HTTP | `loki.service.consul` |
+| OTel Collector gRPC | 4317 | gRPC | System job on all nodes |
+| OTel Collector HTTP | 4318 | HTTP | System job on all nodes |
+| Consul | 8500 | HTTP | Internal only |
+| Nomad | 4646 | HTTP | Exposed via ALB |
+
+## VPC Network Layout (`10.0.0.0/16`)
+
+| Subnet | CIDRs | Purpose |
+|--------|-------|---------|
+| Public | `10.0.1.0/24` – `10.0.3.0/24` | ALB (us-east-1a/b/c) |
+| Private | `10.0.11.0/24` – `10.0.16.0/24` | All EC2 nodes (6 subnets) |
+| ElastiCache | `10.0.21.0/24` – `10.0.23.0/24` | Redis (if managed) |
+
+VPC Endpoints: S3 (Gateway), Secrets Manager, EC2, EC2 Instance Connect (all private subnets). Single shared NAT Gateway.
+
+## AWS Secrets Manager
+
+| Secret ID | Content |
+|-----------|---------|
+| `e2b-cloudflare` | `{"TOKEN": "..."}` |
+| `e2b-postgres-connection-string` | Supabase Session Pooler URL |
+| `e2b-supabase-jwt-secrets` | JWT secret |
+| `e2b-cluster` | Nomad/Consul ACL tokens + gossip key |
+| `e2b-clickhouse` | Username, password, server secret |
+| `e2b-grafana` | Grafana API key, OTLP URLs, collector tokens |
+| `e2b-api-secret` | API internal secret |
+| `e2b-admin-token` | Admin API token |
+| `e2b-sandbox-access-token-hash-seed` | Sandbox access token seed |
+| `e2b-launch-darkly-api-key` | Feature flags (empty = disabled) |
+| `e2b-redis-cluster-url` | Redis TLS URL (if managed) |
+| `e2b-redis-tls-ca-base64` | Redis TLS CA cert (if managed) |
+
+## Security Groups
+
+| Group | Inbound Rules |
+|-------|--------------|
+| `e2b-ingress-load-balancer` | TCP 80, 443 from `0.0.0.0/0` |
+| `e2b-cluster-node` | TCP 22 from Instance Connect SG; TCP 4646, 8080 from ALB SG; all traffic self (cluster) |
+
+---
+
 # AWS Self-Hosting Deployment Guide (Fara Inc)
 
 Practical deployment guide for self-hosting E2B on AWS, based on our production deployment to `us-east-1`. This documents the actual steps, gotchas, and fixes discovered during deployment.
