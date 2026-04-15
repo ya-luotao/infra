@@ -119,7 +119,7 @@ resource "aws_instance" "clickhouse" {
     http_tokens = "required"
   }
 
-  user_data = base64encode(templatefile("${local.scripts_path}/start-clickhouse.sh", {
+  user_data_base64 = base64encode(templatefile("${local.scripts_path}/start-clickhouse.sh", {
     NODE_POOL                    = var.node_pool_name
     CLUSTER_TAG_NAME             = var.cluster_tag_name
     CLUSTER_TAG_VALUE            = var.cluster_tag_value
