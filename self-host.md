@@ -1,5 +1,9 @@
 # Self-hosting E2B
 
+> **Running a fork?** If you're maintaining a downstream fork of this repo, see
+> [`SELF-HOST-LOG.md`](./SELF-HOST-LOG.md) for the pattern we use to track upstream
+> syncs and record local infra changes.
+
 ## Prerequisites
 
 **Tools**

@@ -262,6 +262,10 @@ go test -race -v -run TestCreateSandbox ./internal/handlers
 
 Self-hosting is fully supported on GCP (AWS in progress). See `self-host.md` for complete setup guide.
 
+This repo is a fork of `e2b-dev/infra`. `SELF-HOST-LOG.md` records upstream sync
+points and the local infra changes we carry on top — check it before pulling from
+upstream or adding new fork-only changes.
+
 Key steps:
 1. Create GCP project and configure quotas
 2. Create `.env.{prod,staging,dev}` from `.env.template`
