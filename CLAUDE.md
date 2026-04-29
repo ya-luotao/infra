@@ -266,6 +266,22 @@ This repo is a fork of `e2b-dev/infra`. `SELF-HOST-LOG.md` records upstream sync
 points and the local infra changes we carry on top — check it before pulling from
 upstream or adding new fork-only changes.
 
+### Fork remotes & sync workflow
+- `origin` → `farainc/e2b-infra` (the deployed fork; only Luo Tao / `ya-luotao` pushes here)
+- `upstream` → `e2b-dev/infra` (read-only)
+- `fork` → `ya-luotao/e2b-infra` (personal fork for upstream PRs)
+
+To sync with upstream, rebase and force-push with lease:
+```bash
+git fetch upstream main
+git rebase upstream/main
+git push origin main --force-with-lease   # never plain --force
+```
+
+`--force-with-lease` is required (rebase rewrites history) and safe here because
+`origin/main` is single-maintainer. Plain `--force` is forbidden — it skips the
+"has someone else pushed since I fetched?" check.
+
 Key steps:
 1. Create GCP project and configure quotas
 2. Create `.env.{prod,staging,dev}` from `.env.template`
