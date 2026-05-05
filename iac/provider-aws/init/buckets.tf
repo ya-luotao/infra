@@ -28,9 +28,62 @@ resource "aws_s3_bucket" "fc_templates" {
   force_destroy = var.allow_force_destroy
 }
 
+# Lifecycle: paused-sandbox snapshots written here on every pause are not
+# overwritten in place — each pause produces a new BuildID prefix. The current
+# code path also leaks blobs whenever a sandbox is killed without going through
+# the admin cancel route (which is the only caller of templateManager.DeleteBuild).
+# Without this rule, fc-templates grows monotonically.
+#
+# An active sandbox's latest snapshot is rewritten each pause, so its
+# LastModified stays fresh. Only orphans (older Builds on the same sandbox,
+# or sandboxes whose kill path didn't clean up) cross the threshold.
+resource "aws_s3_bucket_lifecycle_configuration" "fc_templates" {
+  bucket = aws_s3_bucket.fc_templates.id
+
+  rule {
+    id     = "expire-stale-snapshots"
+    status = "Enabled"
+
+    filter {
+      prefix = ""
+    }
+
+    expiration {
+      days = var.fc_templates_expiration_days
+    }
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 1
+    }
+  }
+}
+
 resource "aws_s3_bucket" "fc_template_build_cache" {
   bucket        = "${var.bucket_prefix}fc-build-cache"
   force_destroy = var.allow_force_destroy
+}
+
+# Build cache is hot or expired — incremental builds touched recently overwrite
+# their entries; entries untouched for a month are unlikely to be reused.
+resource "aws_s3_bucket_lifecycle_configuration" "fc_template_build_cache" {
+  bucket = aws_s3_bucket.fc_template_build_cache.id
+
+  rule {
+    id     = "expire-stale-build-cache"
+    status = "Enabled"
+
+    filter {
+      prefix = ""
+    }
+
+    expiration {
+      days = var.fc_template_build_cache_expiration_days
+    }
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 1
+    }
+  }
 }
 
 # ---

@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 
 	"github.com/e2b-dev/infra/packages/api/internal/db"
 	"github.com/e2b-dev/infra/packages/api/internal/orchestrator"
@@ -15,11 +16,12 @@ import (
 	"github.com/e2b-dev/infra/packages/api/internal/utils"
 	"github.com/e2b-dev/infra/packages/auth/pkg/auth"
 	"github.com/e2b-dev/infra/packages/db/queries"
+	"github.com/e2b-dev/infra/packages/shared/pkg/clusters"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
 
-func (a *APIStore) deleteSnapshot(ctx context.Context, sandboxID string, teamID uuid.UUID) error {
+func (a *APIStore) deleteSnapshot(ctx context.Context, sandboxID string, teamID, clusterID uuid.UUID) error {
 	snapshot, err := a.throttledGetSnapshotBuilds(ctx, teamID, sandboxID)
 	if err != nil {
 		return err
@@ -36,6 +38,32 @@ func (a *APIStore) deleteSnapshot(ctx context.Context, sandboxID string, teamID 
 	a.templateCache.InvalidateAllTags(context.WithoutCancel(ctx), snapshot.TemplateID)
 	a.templateCache.InvalidateAliasesByTemplateID(context.WithoutCancel(ctx), snapshot.TemplateID, aliasKeys)
 	a.snapshotCache.Invalidate(context.WithoutCancel(ctx), sandboxID)
+
+	// Delete the snapshot blobs in object storage for every build of this
+	// snapshot. The DB delete + cache invalidation above is not sufficient:
+	// without this loop the fc-templates bucket keeps the actual memfile +
+	// rootfs files indefinitely, growing monotonically with kill volume.
+	// Best-effort — failures are logged but don't fail the kill, and the
+	// bucket-level lifecycle rule (iac/provider-aws/init/buckets.tf) sweeps
+	// any leftovers as a backstop.
+	for _, build := range snapshot.Builds {
+		buildErr := a.templateManager.DeleteBuild(
+			context.WithoutCancel(ctx),
+			build.BuildID,
+			snapshot.TemplateID,
+			clusterID,
+			build.ClusterNodeID,
+		)
+		if buildErr != nil {
+			logger.L().Warn(ctx, "failed to delete snapshot blobs from object storage",
+				zap.Error(buildErr),
+				logger.WithSandboxID(sandboxID),
+				logger.WithBuildID(build.BuildID.String()),
+				logger.WithTemplateID(snapshot.TemplateID),
+				logger.WithClusterID(clusterID),
+			)
+		}
+	}
 
 	return nil
 }
@@ -56,6 +84,7 @@ func (a *APIStore) DeleteSandboxesSandboxID(
 
 	team := auth.MustGetTeamInfo(c)
 	teamID := team.ID
+	clusterID := clusters.WithClusterFallback(team.ClusterID)
 
 	telemetry.SetAttributes(ctx,
 		telemetry.WithSandboxID(sandboxID),
@@ -84,7 +113,7 @@ func (a *APIStore) DeleteSandboxesSandboxID(
 	}
 
 	// remove any snapshots when the sandbox is not running
-	deleteSnapshotErr := a.deleteSnapshot(ctx, sandboxID, teamID)
+	deleteSnapshotErr := a.deleteSnapshot(ctx, sandboxID, teamID, clusterID)
 	switch {
 	case errors.Is(deleteSnapshotErr, db.ErrSnapshotNotFound):
 		// no snapshot found, nothing to do
