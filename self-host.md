@@ -167,6 +167,30 @@ The AWS deployment provisions the following:
 **Managed Services (optional):**
 - ElastiCache Redis (set `REDIS_MANAGED=true`)
 
+### Running multiple stacks in one AWS account
+
+Most named resources are namespaced by `PREFIX`, but a few are **not** and will
+collide if you deploy a second stack into the same AWS account with the default
+config. To run multiple independent E2B deployments in one account, give each
+stack its own `.env.<env>` file with **distinct** values for all of the
+following (see the "Multiple stacks" block in [`.env.aws.template`](.env.aws.template)):
+
+| Variable | Why it must differ | Notes |
+| --- | --- | --- |
+| `PREFIX` | Namespaces ~all named resources (S3 data buckets, ECR repos, IAM roles, Secrets Manager entries, ALB/security groups, Nomad/Consul cluster). | e.g. `team2-` |
+| `DOMAIN_NAME` | Each stack owns the wildcard `*.DOMAIN_NAME` DNS records and an ACM certificate keyed on the domain in Cloudflare. Two stacks **cannot** share a domain — `PREFIX` does not help here. | Use a different domain or subdomain. |
+| `TERRAFORM_STATE_KEY` | The Terraform state object key. Defaults to `terraform/orchestration/state`; two stacks sharing it would read and overwrite each other's state. | e.g. `terraform/orchestration/team2/state`. The state **bucket** (`<account-id>-terraform-state`) is shared, which is fine because each stack uses a distinct key. |
+
+Optional:
+
+| Variable | Why | Notes |
+| --- | --- | --- |
+| `VPC_CIDR` | Two fully independent stacks can keep the default (overlapping) `10.0.0.0/16`. Only set a non-overlapping block (e.g. `10.1.0.0/16`) if the two VPCs must peer or route to each other. | Must be a `/16`; the subnets are derived from it. The default reproduces the historical subnet layout exactly. |
+
+> Note: there is currently no Terraform state locking on AWS (no DynamoDB lock
+> table). Distinct `TERRAFORM_STATE_KEY` values keep separate stacks isolated,
+> but avoid running concurrent `apply`s against the **same** stack.
+
 ### AWS Troubleshooting
 
 **Bare metal instances not available**

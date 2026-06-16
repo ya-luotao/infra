@@ -10,19 +10,20 @@ variable "vpc_cidr" {
 
 variable "vpc_public_subnets" {
   type        = list(string)
-  default     = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
-  description = "CIDRs for the public subnets in the VPC, at least three are required"
+  default     = []
+  description = "CIDRs for the public subnets in the VPC, at least three are required. Leave empty to derive them from vpc_cidr; with the default vpc_cidr the layout 10.0.1.0/24, 10.0.2.0/24, 10.0.3.0/24 is preserved."
 }
 
 variable "vpc_private_subnets" {
   type        = list(string)
-  default     = ["10.0.11.0/24", "10.0.12.0/24", "10.0.13.0/24", "10.0.14.0/24", "10.0.15.0/24", "10.0.16.0/24"]
-  description = "CIDRs for the private subnets in the VPC, at least three are required"
+  default     = []
+  description = "CIDRs for the private subnets in the VPC, at least three are required. Leave empty to derive them from vpc_cidr; with the default vpc_cidr the layout 10.0.11.0/24 .. 10.0.16.0/24 is preserved."
 }
 
 variable "vpc_elasticache_subnets" {
-  type    = list(string)
-  default = ["10.0.21.0/24", "10.0.22.0/24", "10.0.23.0/24"]
+  type        = list(string)
+  default     = []
+  description = "CIDRs for the elasticache subnets in the VPC. Leave empty to derive them from vpc_cidr; with the default vpc_cidr the layout 10.0.21.0/24, 10.0.22.0/24, 10.0.23.0/24 is preserved."
 }
 
 variable "vpc_availability_zones" {

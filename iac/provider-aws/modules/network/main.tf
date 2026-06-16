@@ -1,3 +1,23 @@
+locals {
+  # Subnet layout. When the explicit override lists are empty we derive the
+  # subnets from vpc_cidr (assumed /16) so a second stack only needs to set a
+  # single, non-overlapping vpc_cidr (e.g. 10.1.0.0/16). With the default
+  # vpc_cidr = "10.0.0.0/16" these resolve byte-for-byte to the previous
+  # hard-coded values, so existing deployments see no diff:
+  #   public      -> 10.0.1.0/24, 10.0.2.0/24, 10.0.3.0/24
+  #   private     -> 10.0.11.0/24 .. 10.0.16.0/24
+  #   elasticache -> 10.0.21.0/24, 10.0.22.0/24, 10.0.23.0/24
+  vpc_public_subnets = length(var.vpc_public_subnets) > 0 ? var.vpc_public_subnets : [
+    for i in [1, 2, 3] : cidrsubnet(var.vpc_cidr, 8, i)
+  ]
+  vpc_private_subnets = length(var.vpc_private_subnets) > 0 ? var.vpc_private_subnets : [
+    for i in [11, 12, 13, 14, 15, 16] : cidrsubnet(var.vpc_cidr, 8, i)
+  ]
+  vpc_elasticache_subnets = length(var.vpc_elasticache_subnets) > 0 ? var.vpc_elasticache_subnets : [
+    for i in [21, 22, 23] : cidrsubnet(var.vpc_cidr, 8, i)
+  ]
+}
+
 module "vpc" {
   source  = "terraform-aws-modules/vpc/aws"
   version = "5.5.3"
@@ -6,9 +26,9 @@ module "vpc" {
   cidr = var.vpc_cidr
 
   azs                 = var.vpc_availability_zones
-  public_subnets      = var.vpc_public_subnets
-  private_subnets     = var.vpc_private_subnets
-  elasticache_subnets = var.vpc_elasticache_subnets
+  public_subnets      = local.vpc_public_subnets
+  private_subnets     = local.vpc_private_subnets
+  elasticache_subnets = local.vpc_elasticache_subnets
 
   elasticache_subnet_assign_ipv6_address_on_creation                = false
   elasticache_subnet_enable_resource_name_dns_aaaa_record_on_launch = false
@@ -32,7 +52,7 @@ module "vpc" {
 }
 
 data "aws_subnet" "default_private" {
-  for_each   = toset(var.vpc_private_subnets)
+  for_each   = toset(local.vpc_private_subnets)
   vpc_id     = module.vpc.vpc_id
   cidr_block = each.value
   depends_on = [
@@ -41,7 +61,7 @@ data "aws_subnet" "default_private" {
 }
 
 data "aws_subnet" "default_public" {
-  for_each   = toset(var.vpc_public_subnets)
+  for_each   = toset(local.vpc_public_subnets)
   vpc_id     = module.vpc.vpc_id
   cidr_block = each.value
   depends_on = [

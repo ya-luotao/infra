@@ -6,6 +6,7 @@ module "network" {
   source = "../modules/network"
 
   prefix                          = var.prefix
+  vpc_cidr                        = var.vpc_cidr
   vpc_availability_zones          = ["${var.region}a", "${var.region}b", "${var.region}c"]
   vpc_endpoint_ingress_subnet_ids = var.endpoint_ingress_subnet_ids
 }

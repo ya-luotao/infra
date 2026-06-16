@@ -23,9 +23,13 @@ terraform {
 
   required_version = ">= 1.0"
 
-  backend "s3" {
-    key = "terraform/orchestration/state"
-  }
+  # Partial backend configuration: `bucket` and `key` are supplied at
+  # `terraform init` time via -backend-config (see iac/provider-aws/Makefile).
+  # Keeping `key` out of this block lets multiple stacks in the same AWS
+  # account use distinct state objects (set TERRAFORM_STATE_KEY per stack).
+  # The Makefile defaults TERRAFORM_STATE_KEY to "terraform/orchestration/state",
+  # so existing deployments keep their current state location unchanged.
+  backend "s3" {}
 }
 
 provider "cloudflare" {
@@ -51,6 +55,7 @@ module "init" {
 
   prefix        = var.prefix
   bucket_prefix = var.bucket_prefix
+  vpc_cidr      = var.vpc_cidr
 
   region = data.aws_region.current.id
   endpoint_ingress_subnet_ids = [
