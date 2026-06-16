@@ -7,6 +7,11 @@ TF := $(shell which terraform)
 TF_VAR_FILE := ./.terraform.${ENV}.tfvars
 TF_VAR_FILE_ARG := $(if $(wildcard $(TF_VAR_FILE)),-var-file=$(TF_VAR_FILE))
 TERRAFORM_STATE_BUCKET ?= $(AWS_ACCOUNT_ID)-terraform-state
+# State object key inside the bucket. Defaults to the historical value so
+# existing/upstream single-stack deployments are unaffected. Set a distinct
+# value per stack (e.g. terraform/orchestration/<prefix>state) to run multiple
+# E2B deployments in the same AWS account without clobbering each other's state.
+TERRAFORM_STATE_KEY ?= terraform/orchestration/state
 TEMPLATE_BUCKET_LOCATION ?= $(AWS_REGION)
 
 BUCKET_PREFIX ?= $(PREFIX)$(AWS_ACCOUNT_ID)-
@@ -27,6 +32,7 @@ tf_vars := AWS_PROFILE=$(AWS_PROFILE) AWS_REGION=$(AWS_REGION) \
 	$(call tfvar, PREFIX) \
 	$(call tfvar, DOMAIN_NAME) \
 	$(call tfvar, BUCKET_PREFIX) \
+	$(call tfvar, VPC_CIDR) \
 	$(call tfvar, CLIENT_CLUSTER_SIZE) \
 	$(call tfvar, CLIENT_SERVER_MACHINE_TYPE) \
 	$(call tfvar, CLIENT_SERVER_NESTED_VIRTUALIZATION) \
@@ -59,7 +65,7 @@ provider-login:
 
 .PHONY: switch
 switch:
-	$(tf_vars) $(TF) init -input=false -upgrade -reconfigure -backend-config="bucket=$(TERRAFORM_STATE_BUCKET)"
+	$(tf_vars) $(TF) init -input=false -upgrade -reconfigure -backend-config="bucket=$(TERRAFORM_STATE_BUCKET)" -backend-config="key=$(TERRAFORM_STATE_KEY)"
 
 .PHONY: init
 init:
@@ -70,7 +76,7 @@ init:
 	else \
 		aws s3api create-bucket --bucket $(TERRAFORM_STATE_BUCKET) --region $(TEMPLATE_BUCKET_LOCATION) --profile $(AWS_PROFILE) --create-bucket-configuration LocationConstraint=$(TEMPLATE_BUCKET_LOCATION) 2>/dev/null || true; \
 	fi
-	$(tf_vars) $(TF) init -upgrade -reconfigure -backend-config="bucket=${TERRAFORM_STATE_BUCKET}"
+	$(tf_vars) $(TF) init -upgrade -reconfigure -backend-config="bucket=$(TERRAFORM_STATE_BUCKET)" -backend-config="key=$(TERRAFORM_STATE_KEY)"
 	$(tf_vars) $(TF) apply -target=module.init -input=false -compact-warnings
 
 .PHONY: plan

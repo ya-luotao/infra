@@ -15,6 +15,12 @@ variable "bucket_prefix" {
   type = string
 }
 
+variable "vpc_cidr" {
+  type        = string
+  default     = "10.0.0.0/16"
+  description = "CIDR block for the VPC. Override per stack (e.g. 10.1.0.0/16) to run multiple E2B deployments in one AWS account without overlapping address space. Must be a /16; subnets are derived from it (see modules/network). The default preserves the historical 10.0.0.0/16 layout."
+}
+
 variable "environment" {
   type = string
 }
